@@ -14,6 +14,10 @@ on:
         default: 'dev'
         type: choice
         options: [dev, stage, prod]
+  
+permissions:
+  id-token: write
+  contents: read
 
 env:
   # Defaults to 'dev' on PR/push, or uses the dropdown value on manual runs.
