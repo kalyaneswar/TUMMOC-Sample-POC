@@ -1,0 +1,109 @@
+name: 'Terraform CI/CD'
+
+on:
+  push:
+    branches: [ "main", "feature/*"]
+  pull_request:
+    branches: [ "main" ]
+  # Manual trigger to select which environment to deploy to
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, stage, prod]
+  
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  # Defaults to 'dev' on PR/push, or uses the dropdown value on manual runs.
+  TARGET_ENV: ${{ github.event.inputs.env || 'dev' }}
+  AWS_REGION: "us-east-1"
+
+jobs:
+  plan:
+    name: 'Terraform Plan & Validate'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: environments/${{ env.TARGET_ENV }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # NOTE:preferably OIDC or Secrets
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: ${{ env.AWS_REGION }}
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      run: terraform plan -var-file="../../vars/${{ env.TARGET_ENV }}.tfvars" -out=tfplan
+
+    - name: Upload Terraform Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ env.TARGET_ENV }}
+        path: environments/${{ env.TARGET_ENV }}/tfplan
+        retention-days: 1
+
+  apply:
+    name: 'Terraform Apply'
+    needs: plan
+    runs-on: ubuntu-latest
+    
+    # ⚠️ CRITICAL FOR MANUAL APPROVAL ⚠️
+    # This links the job to a GitHub Environment. 
+    # Go to your GitHub Repo -> Settings -> Environments -> Create 'dev'/'stage'/'prod' 
+    # and check "Required reviewers" to enforce manual approval before this job runs.
+    environment: 
+      name: ${{ github.event.inputs.env || 'dev' }}
+      
+    # Only run apply on main branch merges or manual runs (exclude PRs)
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    defaults:
+      run:
+        working-directory: environments/${{ env.TARGET_ENV }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # - name: Configure AWS Credentials
+    #   uses: aws-actions/configure-aws-credentials@v4
+    #   ...
+
+    # Plan
+
+    - name: Download Terraform Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan-${{ env.TARGET_ENV }}
+        path: environments/${{ env.TARGET_ENV }}
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve "tfplan"
