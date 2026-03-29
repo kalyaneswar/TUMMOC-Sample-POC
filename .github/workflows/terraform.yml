@@ -90,6 +90,8 @@ jobs:
     #   uses: aws-actions/configure-aws-credentials@v4
     #   ...
 
+    # Plan
+
     - name: Download Terraform Plan
       uses: actions/download-artifact@v4
       with:
